@@ -1,138 +1,156 @@
-# AI Animal Image Recognition on Night-Vision Camera-Trap Images
+# Release Notes Agent 📝
 
-**ACM 40960 — Project 9**
-Srivani Konda and Navya Sri Mungamuri — University College Dublin, Summer 2026
+Point it at a GitHub repo and it reads every merged PR and commit since your
+last release, then drafts **human-readable release notes**, a **tweet**, and a
+**LinkedIn post** — ready to review and publish.
 
-Camera traps take millions of photos a year, and most of them are empty or taken
-at night. The night ones are grayscale infrared images with low contrast, which
-are hard for models trained on normal daytime photos. In this project we train a
-model to recognise animal species in night-vision (infrared) camera-trap images
-and check how well it does using accuracy, precision and recall.
+Ships as a **GitHub Action** so any repo can install it in ~15 lines of YAML.
 
-The background reading and the baselines we compare against are in
-[`docs/literature_review.md`](docs/literature_review.md).
+## How it works
 
-## The dataset
+```
+GitHub API ──▶ collect ──▶ categorize ──▶ summarize ──▶ outputs
+              merged PRs   feat/fix/docs   Claude API    RELEASE_NOTES.md
+              + commits    via labels &    (or template  tweet.txt
+              since last   conventional    fallback)     linkedin.txt
+              release      commits
+```
 
-We use real infrared night-vision camera-trap images from the **Caltech Camera
-Traps** dataset (Beery et al., 2018), downloaded through the
-[LILA BC](https://lila.science/datasets/caltech-camera-traps) Google Cloud mirror.
-A ready-made subset is included in the repo at
-[`data/night_wildlife/`](data/night_wildlife):
+1. **Collect** — finds your last published release (falls back to the latest
+   tag, then full history), and gathers every merged PR and commit since.
+   PRs are preferred over raw commits because they carry titles, labels, and
+   descriptions; direct pushes are still included.
+2. **Categorize** — buckets changes into Breaking Changes / Features /
+   Bug Fixes / Performance / Docs / Maintenance using PR labels first, then
+   conventional-commit prefixes (`feat:`, `fix:`, `feat!:` …).
+3. **Summarize** — sends the digest to Claude (`claude-opus-4-8`, structured
+   JSON output) to write notes that lead with *what changed for users*, plus
+   matching social posts. **No API key? It still works** — a deterministic
+   template renderer produces clean, category-grouped notes.
 
-- 6 species: bobcat, coyote, raccoon, opossum, rabbit, deer
-- 200 images per species (1,200 total)
-- every image is a genuine night infrared frame (checked to be grayscale)
+## Install as a GitHub Action
 
-`scripts/build_night_wildlife.py` builds this subset: it keeps only night
-captures that are actually grayscale (real infrared), and de-duplicates by
-capture sequence so near-identical burst frames don't end up split across
-training and test.
+Add `.github/workflows/release-notes.yml` to your repo:
 
-## How to run it
+```yaml
+name: Draft release notes
+on:
+  push:
+    tags: ["v*"]
 
-You need Python 3.9+ and the packages in `requirements.txt`.
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: notes
+        uses: srivanik8/final-project@main
+        with:
+          version: ${{ github.ref_name }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}  # optional
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" --draft \
+            --notes-file "${{ steps.notes.outputs.notes-file }}"
+```
+
+Push a tag like `v1.2.0` and a **draft** release appears with the generated
+notes — you always review before publishing. The tweet and LinkedIn drafts
+are uploaded as workflow artifacts.
+
+### Action inputs
+
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `version` | ✅ | — | Version being released (e.g. `v1.2.0`) |
+| `repo` | | current repo | `owner/name` to analyze |
+| `base` | | latest release | Tag to diff from |
+| `github-token` | | workflow token | Token for reading PRs/commits |
+| `anthropic-api-key` | | — | Enables AI-written notes; omit for template output |
+| `output-dir` | | `release-notes-output` | Where the three files are written |
+
+### Action outputs
+
+`notes-file`, `tweet-file`, `linkedin-file`, and `generated-by`
+(`claude` or `template`).
+
+## Run locally (CLI)
 
 ```bash
-pip install -r requirements.txt
+pip install "release-notes-agent[ai] @ git+https://github.com/srivanik8/final-project"
+
+export GITHUB_TOKEN=ghp_...          # for private repos / higher rate limits
+export ANTHROPIC_API_KEY=sk-ant-...  # optional — omit for template mode
+
+release-notes-agent owner/repo --version v1.2.0
 ```
 
-**1. Train.** ImageNet-pretrained ResNet-18, infrared (grayscale) input,
-retraining the later layers on the night images:
+Outputs land in `release-notes-output/`:
+
+```
+RELEASE_NOTES.md   # markdown notes, grouped by category, with PR links + credits
+tweet.txt          # ≤280 chars, version + one highlight + release link
+linkedin.txt       # short post aimed at engineers evaluating the project
+```
+
+## Sample output (template mode)
+
+```markdown
+# v1.1.0
+
+## ✨ Features
+- Add dark mode (#42) @alice
+
+## 🐛 Bug Fixes
+- Handle crash on empty config (#43) @bob
+
+## 🙌 Contributors
+@alice, @bob
+```
+
+With an Anthropic key, Claude rewrites the bullets for end users, adds a
+release summary paragraph, and puts migration guidance under any breaking
+changes.
+
+## Project layout
+
+```
+release_notes_agent/
+  github_client.py   # minimal GitHub REST client (retries, pagination)
+  collector.py       # merged PRs + commits since last release → ChangeSet
+  categorize.py      # labels + conventional commits → sections
+  render.py          # deterministic markdown/tweet/linkedin templates
+  summarizer.py      # Claude call (structured output) with template fallback
+  cli.py             # entrypoint
+action.yml           # composite GitHub Action
+tests/               # pytest suite (no network needed)
+```
+
+## Development
 
 ```bash
-python scripts/run_training.py --data-dir data/night_wildlife --epochs 16 \
-    --image-size 224 --pretrained --grayscale --freeze-until layer2 \
-    --learning-rate 3e-4 --output-dir results/demo --device cpu
+pip install -e ".[dev]"
+pytest
 ```
 
-(If your machine can't download the pretrained weights automatically, run
-`python scripts/fetch_pretrained_weights.py` first.)
+## Design decisions
 
-**2. Evaluate** on the held-out test set. This prints the scores and saves the
-plots:
+- **Works without an AI key.** Adoption first: the template output is genuinely
+  useful, and the AI output is an upgrade, not a requirement.
+- **Structured outputs, not prompt-and-pray.** The Claude call uses
+  `output_config.format` with a JSON schema, so the response is guaranteed
+  parseable — no regex scraping of model output.
+- **Drafts, never auto-publish.** The action creates *draft* releases and
+  text files. A human always approves before anything goes public.
+- **PRs over commits.** PR titles + labels are the richest signal of intent;
+  commits fill the gaps for direct pushes.
 
-```bash
-python scripts/run_evaluation.py --output-dir results/demo --device cpu
-```
+## License
 
-**3. Predict** on a single image:
-
-```bash
-python scripts/predict.py data/night_wildlife/coyote/coyote_0003.jpg \
-    --checkpoint results/demo/best_model.pt
-```
-
-```
-Predictions for data/night_wildlife/coyote/coyote_0003.jpg:
-  1. coyote               0.933
-  2. raccoon              0.046
-  3. rabbit               0.009
-```
-
-Everything (checkpoint, `metrics.json`, and the plots) is written to
-`results/demo/`. A saved copy of the plots is in
-[`docs/demo_results/`](docs/demo_results/).
-
-## Results
-
-Trained on the 1,200 infrared images above (70% train / 15% val / 15% test),
-16 epochs on CPU. Test set = 180 images, 30 per class.
-
-**Overall test accuracy: 0.77** (random guessing would be 0.17 with 6 classes).
-Macro precision 0.77, recall 0.77, F1 0.77.
-
-| Species  | Precision | Recall | F1   | Test images |
-|----------|-----------|--------|------|-------------|
-| deer     | 0.88      | 0.93   | 0.90 | 30 |
-| rabbit   | 0.83      | 0.80   | 0.81 | 30 |
-| coyote   | 0.78      | 0.70   | 0.74 | 30 |
-| raccoon  | 0.78      | 0.70   | 0.74 | 30 |
-| opossum  | 0.69      | 0.80   | 0.74 | 30 |
-| bobcat   | 0.70      | 0.70   | 0.70 | 30 |
-
-Deer are the easiest (distinct shape and legs); bobcat is the hardest, and most
-of its mistakes are with the other similarly-sized carnivores. This lines up with
-the literature: accuracy on night infrared camera-trap images sits well below the
-90%+ that models reach on clean daytime photos.
-
-![training curves](docs/demo_results/training_curves.png)
-![confusion matrix](docs/demo_results/confusion_matrix.png)
-
-## Making the dataset bigger
-
-You can pull more images per class, or add more species, straight from the mirror:
-
-```bash
-python scripts/build_night_wildlife.py --out data/night_wildlife \
-    --per-class 300 --species bobcat coyote raccoon opossum rabbit deer skunk fox
-```
-
-## What's in the repo
-
-```
-src/        config, data loading + preprocessing, model, training, evaluation, detection
-scripts/    build the dataset, train, evaluate, predict
-docs/       literature review + saved result plots
-data/       the ready-made infrared dataset
-```
-
-Main design choices:
-
-- **Preprocessing** — infrared frames are single-channel, so we convert them to
-  3 channels and normalise with ImageNet stats. Training adds random crops,
-  flips, rotations and brightness/contrast jitter.
-- **Model** — ResNet-18 pretrained on ImageNet, with a new final layer for our
-  species. Early layers are frozen and the later layers are retrained (transfer
-  learning).
-- **Training** — class weighting for imbalance, label smoothing, AdamW with a
-  cosine schedule, early stopping, and saving the best checkpoint.
-- **Evaluation** — accuracy, precision, recall, F1 (per class and averaged), a
-  confusion matrix, and a comparison against published baselines.
-- **Detection (optional)** — `src/detect.py` can use YOLOv8 to crop to the animal
-  before classifying, which removes background. Install `ultralytics` to use it.
-
-## Credit
-
-Caltech Camera Traps — Beery, Van Horn & Perona, *Recognition in Terra Incognita*,
-ECCV 2018, via LILA BC (https://lila.science/datasets/caltech-camera-traps).
+MIT

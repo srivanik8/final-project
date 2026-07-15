@@ -1,0 +1,49 @@
+# Example workflow — copy this into any repo that installs the action.
+# Runs when you push a version tag, drafts the notes, and attaches them
+# to a draft GitHub Release for you to review.
+name: Draft release notes
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to draft notes for (e.g. v1.2.0)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate release notes
+        id: notes
+        uses: srivanik8/final-project@main
+        with:
+          version: ${{ github.event.inputs.version || github.ref_name }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload drafts as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes-output/
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          gh release create "$VERSION" \
+            --draft \
+            --title "$VERSION" \
+            --notes-file "${{ steps.notes.outputs.notes-file }}" \
+            || gh release edit "$VERSION" \
+                 --notes-file "${{ steps.notes.outputs.notes-file }}"

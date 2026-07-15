@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "release-notes-agent"
+version = "0.1.0"
+description = "Drafts release notes, a tweet, and a LinkedIn post from a repo's merged PRs and commits."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+ai = ["anthropic>=0.40"]
+dev = ["pytest>=8", "responses>=0.25"]
+
+[project.scripts]
+release-notes-agent = "release_notes_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["release_notes_agent*"]

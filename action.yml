@@ -1,0 +1,68 @@
+name: "Release Notes Agent"
+description: >-
+  Reads merged PRs and commits since your last release and drafts
+  human-readable release notes plus a tweet and LinkedIn post.
+author: "srivanik8"
+branding:
+  icon: "file-text"
+  color: "purple"
+
+inputs:
+  version:
+    description: "The version being released (e.g. v1.2.0)"
+    required: true
+  repo:
+    description: "Repository to analyze (owner/name). Defaults to the current repo."
+    required: false
+    default: ${{ github.repository }}
+  base:
+    description: "Tag to diff from. Defaults to the latest published release."
+    required: false
+  github-token:
+    description: "Token used to read PRs/commits. Defaults to the workflow token."
+    required: false
+    default: ${{ github.token }}
+  anthropic-api-key:
+    description: "Anthropic API key for AI-written notes. Omit to use template output."
+    required: false
+  output-dir:
+    description: "Directory to write RELEASE_NOTES.md, tweet.txt, linkedin.txt"
+    required: false
+    default: "release-notes-output"
+
+outputs:
+  notes-file:
+    description: "Path to the generated RELEASE_NOTES.md"
+    value: ${{ steps.generate.outputs.notes-file }}
+  tweet-file:
+    description: "Path to the generated tweet.txt"
+    value: ${{ steps.generate.outputs.tweet-file }}
+  linkedin-file:
+    description: "Path to the generated linkedin.txt"
+    value: ${{ steps.generate.outputs.linkedin-file }}
+  generated-by:
+    description: "'claude' if AI-written, 'template' if fallback output"
+    value: ${{ steps.generate.outputs.generated-by }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install release-notes-agent
+      shell: bash
+      run: pip install --quiet "${{ github.action_path }}[ai]"
+
+    - name: Generate release notes
+      id: generate
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        release-notes-agent "${{ inputs.repo }}" \
+          --version "${{ inputs.version }}" \
+          ${{ inputs.base && format('--base "{0}"', inputs.base) || '' }} \
+          --out "${{ inputs.output-dir }}"
